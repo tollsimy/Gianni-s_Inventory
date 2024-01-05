@@ -2,3 +2,6 @@ env/
 .vscode/
 lista_tabacchi.xls*
 **/__pycache__/
+build/
+dist/
+*.pdf
