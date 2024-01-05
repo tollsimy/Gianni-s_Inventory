@@ -1,0 +1,4 @@
+env/
+.vscode/
+lista_tabacchi.xls*
+**/__pycache__/
