@@ -7,6 +7,10 @@ import threading
 import time
 import csv
 
+#NOTE: for how it is implemented psycopg2, executing two queries means automatically
+# that the first one is committed.
+# So, make sure to not execute queries if user has not pressed apply or undo changes
+
 def create_connection(db_name, db_user, db_pass, db_host):
     connection = None
     try:
@@ -92,6 +96,9 @@ class Inventory(QObject):
                     notify = self.conn.notifies.pop(0)
                     #print("Got NOTIFY:", notify.pid, notify.channel, notify.payload)
                     # Update productList
+                    # Note: this won't automatically apply changes even if it is executing
+                    # a query because other instances are blocked until the other commits the
+                    # pending changes
                     self.getProductList()
                     # Send signal to update the table
                     self.changeSignal.emit()
@@ -130,25 +137,17 @@ class Inventory(QObject):
         self.cur.execute(add_product_sql, attributes)
 
     # Commit or discard is caller's responsibility through applyChanges() or discardChanges()
-    # Note: this method is used to update a product but note that quantity is updated
-    # as increment or decrement, so passing -20 means that the quantity will be decreased by 20
-    def updateProductQuantityIncrement(self, product):
-        # Update quantity
-        self.update_product_sql_statements += "UPDATE products SET quantity = quantity + %s WHERE prodCode = %s;"
-        quantity = product.attributesDict.get("quantity")
-        prodCode = product.attributesDict.get("prodCode")
-        # Update all but quantity
-        newAttrDict = product.attributesDict.copy()
-        del newAttrDict["quantity"]
-        newAttrList = list(newAttrDict.keys())
+    def updateProduct(self, product):
+        attrDict = product.attributesDict
+        attrList = list(product.attributesDict.keys())
         self.update_product_sql_statements += "UPDATE products SET "
-        self.update_product_sql_statements += ", ".join([attrib + " = %s" for attrib in newAttrList])
+        self.update_product_sql_statements += ", ".join([attrib + " = %s" for attrib in attrList])
         self.update_product_sql_statements += " WHERE prodCode = %s;"
         # Replace "None" and empty string with None
-        attributes = [None if (attr == "None" or attr == "") else attr for attr in newAttrDict.values()]
+        attributes = [None if (attr == "None" or attr == "") else attr for attr in attrDict.values()]
         # Add prodCode to the end of attributes because it's used in the WHERE clause
-        attributes.append(newAttrDict.get("prodCode"))
-        self.cur.execute(self.update_product_sql_statements, (quantity, prodCode, *attributes))
+        attributes.append(attrDict.get("prodCode"))
+        self.cur.execute(self.update_product_sql_statements, attributes)
         self.update_product_sql_statements = ""
 
     # Commit or discard is caller's responsibility through applyChanges() or discardChanges()

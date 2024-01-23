@@ -72,19 +72,29 @@ class IntOrEmptyValidator(QValidator):
             except ValueError:
                 return QValidator.Invalid, string, pos
 
-# Insert only numbers, plus or minus sign before a number needed
+# Valid combinations:
+# +1, -1, +20=, -20=, +, -, ""
 class IncrementDecrementValidator(QValidator):
     def validate(self, string, pos):
         if string == "":
             return QValidator.Acceptable, string, pos
-        elif string[0] == '+' or string[0] == '-':
+        elif string == '+' or string == '-':
             return QValidator.Acceptable, string, pos
+        elif string[0] == '+' or string[0] == '-':
+            if string[-1] == "=":
+                try:
+                    val = int(string[:-1])
+                    return QValidator.Acceptable, string, pos
+                except ValueError:
+                    return QValidator.Invalid, string, pos
+            else:
+                try:
+                    val = int(string)
+                    return QValidator.Acceptable, string, pos
+                except ValueError:
+                    return QValidator.Invalid, string, pos
         else:
-            try:
-                val = int(string)
-                return QValidator.Acceptable, string, pos
-            except ValueError:
-                return QValidator.Invalid, string, pos
+            return QValidator.Invalid, string, pos
             
 class QDoubleOrEmptyValidatorDot(QDoubleValidator):
     def validate(self, string, pos):

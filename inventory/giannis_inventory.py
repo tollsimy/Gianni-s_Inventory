@@ -43,9 +43,8 @@ class MainWindow(QMainWindow):
         self.widget.setLayout(self.gridLayout)
         self.setCentralWidget(self.widget)
 
-        #TODO: what if we have changes and we get a notification?
         # Connect signals when inventory changes
-        self.myInventory.changeSignal.connect(lambda: self.refreshTable(self.myInventory.getProductList()))
+        self.myInventory.changeSignal.connect(lambda: self.refreshTable(self.myInventory.productDict))
 
         # Set focus on searchCell
         self.searchCellBarcodeStecca.setFocus()
@@ -147,7 +146,7 @@ class MainWindow(QMainWindow):
         # Add callback for when a cell is changed
         self.tableWidget.itemChanged.connect(self.on_item_changed)
         # Add callback for when a cell is entered
-        self.tableWidget.itemClicked.connect(self.on_item_clicked)
+        self.tableWidget.itemDoubleClicked.connect(self.on_item_clicked)
 
         self.refreshTable(self.myInventory.getProductList())
 
@@ -196,46 +195,62 @@ class MainWindow(QMainWindow):
         self.setMenuBar(self.myMenubarFactory)
 
     def toggleSTAQMode(self):
-        self.STAQMode = not self.STAQMode
-        if(self.STAQMode):
-            self.buttonSTAQMode.setText("Exit STAQ Mode")
-            self.buttonSTAQMode.setStyleSheet("background-color: green")
-            # Set focus on searchCell
-            self.searchCellBarcodeStecca.setFocus()
+        if(not self.STAQMode):
+            if(self.isTableChanged):
+                confirmDialog = Auxiliary.ConfirmChangesFirstDialog("You must confirm or reset changes before entering STAQ Mode!")
+                confirmDialog.exec()
+            else:
+                self.STAQMode = not self.STAQMode
+                self.buttonSTAQMode.setText("Exit STAQ Mode")
+                self.buttonSTAQMode.setStyleSheet("background-color: green")
+                # Set focus on searchCell
+                self.searchCellBarcodeStecca.setFocus()
         else:
-            self.buttonSTAQMode.setText("STAQ Mode")
-            self.buttonSTAQMode.setStyleSheet("background-color: none")
+            if(self.isTableChanged):
+                confirmDialog = Auxiliary.ConfirmChangesFirstDialog("You must confirm or reset changes before exiting STAQ Mode!")
+                confirmDialog.exec()
+            else:
+                self.STAQMode = not self.STAQMode
+                self.buttonSTAQMode.setText("STAQ Mode")
+                self.buttonSTAQMode.setStyleSheet("background-color: none")
 
     def on_item_changed(self, item):
         self.isTableChanged = True
-        #print(item.row(), item.column(), item.text())
-        # Set quantity to 0 if not valid (e.g. + or -)
+        # If quantity is changed
         if(item.column() == Product.attributesNames.index("quantity")):
+            # Set quantity to 0 if not valid (e.g. + or -)
             if(item.text() == "" or item.text() == "+" or item.text() == "-"):
                 item.setText("0")
+            # Increment/decrement if quantity ends with =, set otherwise
+            if(item.text().endswith("=")):
+                # Get previous quantity
+                prodCode = int(self.tableWidget.item(item.row(), Product.attributesNames.index("prodCode")).text())
+                prevQuantity = self.myInventory.productDict.get(prodCode).attributesDict.get("quantity")
+                # Update quantity with increment
+                quantity = prevQuantity + int(item.text()[0:-1])
+                # Disconnect callback to prevent infinite loop
+                self.tableWidget.itemChanged.disconnect()
+                # Set quantity in table to new value
+                self.tableWidget.item(item.row(), item.column()).setText(str(quantity))
+                # Reconnect callback
+                self.tableWidget.itemChanged.connect(self.on_item_changed)
+            # Else set quantity to the new value without increment
         newProduct = Product(*[self.tableWidget.item(item.row(), i).text() for i in range(Product.attributesNum)])
-        self.myInventory.updateProductQuantityIncrement(newProduct)
-        # Set quantity value to the incremented one in table text
-        if(item.column() == Product.attributesNames.index("quantity")):
-            # Get previous quantity
-            prevQuantity = self.myInventory.productDict.get(int(newProduct.attributesDict.get("prodCode"))).attributesDict.get("quantity")
-            # Update quantity with increment
-            quantity = prevQuantity + int(item.text())
-            self.myInventory.productDict.get(int(newProduct.attributesDict.get("prodCode"))).attributesDict["quantity"] = quantity
-            # Disconnect callback to prevent infinite loop
-            self.tableWidget.itemChanged.disconnect()
-            self.tableWidget.item(item.row(), item.column()).setText(str(quantity))
-            # Reconnect callback
-            self.tableWidget.itemChanged.connect(self.on_item_changed)
-
+        self.myInventory.updateProduct(newProduct)
         self.buttonSave.setEnabled(self.isTableChanged)
         self.buttonUndo.setEnabled(self.isTableChanged)
 
+    # Putting same number above another is not working because is not changed
     def on_item_clicked(self, item):
-        # Reset to +0 when clicking on quantity cell to add increment/decrement
+        # Disconnect callback so that +0 is visible
+        self.tableWidget.itemChanged.disconnect()
+        # Reset cell to previous increment when clicking on quantity cell to add increment/decrement
+        # e.g. if double clicking on +20 it will show by default +20, then you can edit it
         if(item.column() == Product.attributesNames.index("quantity")):
             if(not item.text().startswith("+") and not item.text().startswith("-")):
-                item.setText("+0")
+                item.setText("+" + item.text())
+        # Reconnect callback
+        self.tableWidget.itemChanged.connect(self.on_item_changed)
 
     def refreshTable(self, productDict):
         # Temporary remove callback on itemChanged since being called when refreshing table
@@ -257,16 +272,16 @@ class MainWindow(QMainWindow):
         self.tableWidget.setSortingEnabled(True)
         # Set callback again
         self.tableWidget.itemChanged.connect(self.on_item_changed)
-        
+    
     def on_text_changed_search_barcode(self, item):
-        if(len(item) == 8 or len(item) == 13):
-            # If STAQMode is enabled, add 1 quantity to product
-            if(self.STAQMode):
+        # If STAQMode is enabled, add 1 quantity to product
+        if(self.STAQMode):
+            if(len(item) == 8 or len(item) == 13):
                 products = self.myInventory.getProductsByBarcode(item)
                 # If only one product is found, add quantity to it
                 # Should be only one product since barcode is unique
                 if(len(products) == 1):
-                    product = products[0]
+                    product = list(products.values())[0]
                     # Get row of product in table
                     row = self.tableWidget.findItems(str(product.attributesDict.get("prodCode")), Qt.MatchExactly)[0].row()
                     # Add quantity
@@ -274,20 +289,24 @@ class MainWindow(QMainWindow):
                     self.tableWidget.item(row, 8).setText(str(quantity + 1))
                 # Reset searchCellBarcode for next scan
                 self.searchCellBarcode.setText("")
-            # If STAQMode is disabled, search for product
-            else:
-                self.refreshTable(self.myInventory.getProductsByBarcode(item))
-                pass
+        # If STAQMode is disabled, search for product
+        else:
+            if(len(item) == 8 or len(item) == 13):
+                prodDict = self.myInventory.productDict.copy()
+                prodDict = {k: v for k, v in prodDict.items() if v.attributesDict.get("barcode") == int(item)}
+                self.refreshTable(prodDict)
+            elif (len(item) == 0):
+                self.refreshTable(self.myInventory.productDict)
 
     def on_text_changed_search_barcode_stecca(self, item):
-        if(len(item) == 8 or len(item) == 13):
-            # If STAQMode is enabled, add 10 quantity to product
-            if(self.STAQMode):
+        # If STAQMode is enabled, add 10 quantity to product
+        if(self.STAQMode):
+            if(len(item) == 8 or len(item) == 13):
                 products = self.myInventory.getProductsByBarcodeStecca(item)
                 # If only one product is found, add quantity to it
                 # Should be only one product since barcodeStecca is unique
                 if(len(products) == 1):
-                    product = products[0]
+                    product = list(products.values())[0]
                     # Get row of product in table
                     row = self.tableWidget.findItems(str(product.attributesDict.get("prodCode")), Qt.MatchExactly)[0].row()
                     # Add quantity
@@ -295,10 +314,14 @@ class MainWindow(QMainWindow):
                     self.tableWidget.item(row, 8).setText(str(quantity + 10))
                 # Reset searchCellBarcodeStecca for next scan
                 self.searchCellBarcodeStecca.setText("")
-            # If STAQMode is disabled, search for product
-            else:
-                self.refreshTable(self.myInventory.getProductsByBarcodeStecca(item))
-                pass
+        # If STAQMode is disabled, search for product
+        else:
+            if(len(item) == 8 or len(item) == 13):
+                prodDict = self.myInventory.productDict.copy()
+                prodDict = {k: v for k, v in prodDict.items() if v.attributesDict.get("barcodeStecca") == int(item)}
+                self.refreshTable(prodDict)
+            elif (len(item) == 0):
+                self.refreshTable(self.myInventory.productDict)
         
     def applyChanges(self):
         self.isTableChanged = False
