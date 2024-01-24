@@ -67,7 +67,6 @@ class MainWindow(QMainWindow):
                 return inventory
             except psycopg2.Error as e:
                 if(Auxiliary.InvalidCredentialsDialog().exec()):
-                    self.myInventory.conn.rollback()
                     print(e)
                     # Retry
                     return self.insertCredentials()
@@ -164,10 +163,12 @@ class MainWindow(QMainWindow):
         self.saveAction.setShortcut("Ctrl+S")
         self.saveAction.triggered.connect(self.applyChanges)
         self.fileMenu.addAction(self.saveAction)
+        self.saveAction.setEnabled(self.isTableChanged)
         self.undoAction = QAction("Undo", self)
         self.undoAction.setShortcut("Ctrl+Z")
         self.undoAction.triggered.connect(self.discardChanges)
         self.fileMenu.addAction(self.undoAction)
+        self.undoAction.setEnabled(self.isTableChanged)
         self.exitAction = QAction("Exit", self)
         self.exitAction.setShortcut("Ctrl+Q")
         self.exitAction.triggered.connect(self.close)
@@ -257,6 +258,8 @@ class MainWindow(QMainWindow):
             self.myInventory.updateProduct(newProduct)
             self.buttonSave.setEnabled(self.isTableChanged)
             self.buttonUndo.setEnabled(self.isTableChanged)
+            self.saveAction.setEnabled(self.isTableChanged)
+            self.undoAction.setEnabled(self.isTableChanged)
         except psycopg2.errors.UniqueViolation:
             self.myInventory.conn.rollback()
             Auxiliary.ProductAlreadyExistDialog().exec()
@@ -300,58 +303,56 @@ class MainWindow(QMainWindow):
     def on_text_changed_search_barcode(self, item):
         # If STAQMode is enabled, add 1 quantity to product
         if(self.STAQMode):
-            if(len(item) == 8 or len(item) == 13):
-                products = self.myInventory.getProductsByBarcode(item)
-                # If only one product is found, add quantity to it
-                # Should be only one product since barcode is unique
-                if(len(products) == 1):
-                    product = list(products.values())[0]
-                    # Get row of product in table
-                    row = self.tableWidget.findItems(str(product.attributesDict.get("prodCode")), Qt.MatchExactly)[0].row()
-                    # Add quantity
-                    quantity = int(self.tableWidget.item(row, Product.attributesNames.index("quantity")).text())
-                    self.tableWidget.item(row, 8).setText(str(quantity + 1))
-                    # Reset searchCellBarcode for next scan
-                    self.searchCellBarcode.setText("")
+            products = self.myInventory.getProductsByBarcode(item)
+            # If only one product is found, add quantity to it
+            # Should be only one product since barcode is unique
+            if(len(products) == 1):
+                product = list(products.values())[0]
+                # Get row of product in table
+                row = self.tableWidget.findItems(str(product.attributesDict.get("prodCode")), Qt.MatchExactly)[0].row()
+                # Add quantity
+                quantity = int(self.tableWidget.item(row, Product.attributesNames.index("quantity")).text())
+                self.tableWidget.item(row, 8).setText(str(quantity + 1))
+                # Reset searchCellBarcode for next scan
+                self.searchCellBarcode.setText("")
         # If STAQMode is disabled, search for product
         else:
-            if(len(item) == 8 or len(item) == 13):
-                prodDict = self.myInventory.productDict.copy()
+            prodDict = self.myInventory.productDict.copy()
+            if(len(item) == 0):
+                self.refreshTable(self.myInventory.productDict)
+            else:
                 prodDict = {k: v for k, v in prodDict.items() if v.attributesDict.get("barcode") == int(item)}
                 if(len(prodDict) == 1):
                     self.refreshTable(prodDict)
-            elif (len(item) == 0):
-                self.refreshTable(self.myInventory.productDict)
-            else:
-                self.refreshTable({})
+                else:
+                    self.refreshTable({})
 
     def on_text_changed_search_barcode_stecca(self, item):
         # If STAQMode is enabled, add 10 quantity to product
         if(self.STAQMode):
-            if(len(item) == 8 or len(item) == 13):
-                products = self.myInventory.getProductsByBarcodeStecca(item)
-                # If only one product is found, add quantity to it
-                # Should be only one product since barcodeStecca is unique
-                if(len(products) == 1):
-                    product = list(products.values())[0]
-                    # Get row of product in table
-                    row = self.tableWidget.findItems(str(product.attributesDict.get("prodCode")), Qt.MatchExactly)[0].row()
-                    # Add quantity
-                    quantity = int(self.tableWidget.item(row, Product.attributesNames.index("quantity")).text())
-                    self.tableWidget.item(row, 8).setText(str(quantity + 10))
-                    # Reset searchCellBarcodeStecca for next scan
-                    self.searchCellBarcodeStecca.setText("")
+            products = self.myInventory.getProductsByBarcodeStecca(item)
+            # If only one product is found, add quantity to it
+            # Should be only one product since barcodeStecca is unique
+            if(len(products) == 1):
+                product = list(products.values())[0]
+                # Get row of product in table
+                row = self.tableWidget.findItems(str(product.attributesDict.get("prodCode")), Qt.MatchExactly)[0].row()
+                # Add quantity
+                quantity = int(self.tableWidget.item(row, Product.attributesNames.index("quantity")).text())
+                self.tableWidget.item(row, 8).setText(str(quantity + 10))
+                # Reset searchCellBarcodeStecca for next scan
+                self.searchCellBarcodeStecca.setText("")
         # If STAQMode is disabled, search for product
         else:
-            if(len(item) == 8 or len(item) == 13):
-                prodDict = self.myInventory.productDict.copy()
+            prodDict = self.myInventory.productDict.copy()
+            if(len(item) == 0):
+                self.refreshTable(self.myInventory.productDict)
+            else:
                 prodDict = {k: v for k, v in prodDict.items() if v.attributesDict.get("barcodeStecca") == int(item)}
                 if(len(prodDict) == 1):
                     self.refreshTable(prodDict)
-            elif (len(item) == 0):
-                self.refreshTable(self.myInventory.productDict)
-            else:
-                self.refreshTable({})
+                else:
+                    self.refreshTable({})
         
     def applyChanges(self):
         self.isTableChanged = False
@@ -359,6 +360,8 @@ class MainWindow(QMainWindow):
         self.refreshTable(self.myInventory.getProductList())
         self.buttonSave.setEnabled(self.isTableChanged)
         self.buttonUndo.setEnabled(self.isTableChanged)
+        self.saveAction.setEnabled(self.isTableChanged)
+        self.undoAction.setEnabled(self.isTableChanged)
 
     def discardChanges(self):
         self.isTableChanged = False
@@ -366,6 +369,8 @@ class MainWindow(QMainWindow):
         self.refreshTable(self.myInventory.getProductList())
         self.buttonSave.setEnabled(self.isTableChanged)
         self.buttonUndo.setEnabled(self.isTableChanged)
+        self.saveAction.setEnabled(self.isTableChanged)
+        self.undoAction.setEnabled(self.isTableChanged)
 
     def addProduct(self):
         if(self.isTableChanged == False):

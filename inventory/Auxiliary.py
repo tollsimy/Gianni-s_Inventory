@@ -95,14 +95,14 @@ class QBigIntValidator(QValidator):
                     return QValidator.Invalid, string, pos
 
 # Valid combinations:
-# +1, -1, +20=, -20=, +, -, ""
+# 3, +1, -1, +20=, -20=, +, -, ""
 class IncrementDecrementValidator(QValidator):
     def validate(self, string, pos):
         if string == "":
             return QValidator.Acceptable, string, pos
         elif string == '+' or string == '-':
             return QValidator.Acceptable, string, pos
-        elif string[0] == '+' or string[0] == '-':
+        else:
             if string[-1] == "=":
                 try:
                     val = int(string[:-1])
@@ -115,8 +115,6 @@ class IncrementDecrementValidator(QValidator):
                     return QValidator.Acceptable, string, pos
                 except ValueError:
                     return QValidator.Invalid, string, pos
-        else:
-            return QValidator.Invalid, string, pos
             
 class QDoubleOrEmptyValidatorDot(QDoubleValidator):
     def validate(self, string, pos):
@@ -292,15 +290,28 @@ class DeleteItemConfirmationDialog(QDialog):
         self.buttonBox.accepted.connect(self.accept)
         self.buttonBox.rejected.connect(self.reject)
 
-        self.layout = QVBoxLayout()
-        message = QLabel("Do you really want to delete the following items?")
-        self.layout.addWidget(message)
+        # Create a new layout for the dialog and add the scroll area and button box to it
+        dialogLayout = QVBoxLayout()
+        message = QLabel("Do you really want to delete the following items? This action cannot be undone.")
+        dialogLayout.addWidget(message)
+
+        self.itemsToRemoveLayout = QVBoxLayout()
         for prod in prodList:
             item = QLabel(str(prod))
-            self.layout.addWidget(item)
-        self.layout.addWidget(item)   
-        self.layout.addWidget(self.buttonBox)
-        self.setLayout(self.layout)
+            self.itemsToRemoveLayout.addWidget(item)
+
+        # Create a new widget for the layout
+        layoutWidget = QWidget()
+        layoutWidget.setLayout(self.itemsToRemoveLayout)
+
+        # Create a scroll area and set its widget to the layout widget
+        scrollArea = QScrollArea()
+        scrollArea.setWidget(layoutWidget)
+
+        dialogLayout.addWidget(scrollArea)
+        dialogLayout.addWidget(self.buttonBox)
+
+        self.setLayout(dialogLayout)
 
 class ProductAlreadyExistDialog(QDialog):
     def __init__(self):
