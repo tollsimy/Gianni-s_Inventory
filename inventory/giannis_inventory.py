@@ -65,12 +65,17 @@ class MainWindow(QMainWindow):
                     #print("Saving credentials")
                     Auxiliary.saveDBCredentials(self.dbName, self.dbUser, self.dbPass, self.dbHost)
                 return inventory
-            except:
+            except psycopg2.Error as e:
                 if(Auxiliary.InvalidCredentialsDialog().exec()):
+                    self.myInventory.conn.rollback()
+                    print(e)
                     # Retry
                     return self.insertCredentials()
                 else:
                     return None
+            except Exception as e:
+                print(e)
+                return None
         else:
             return None
 
@@ -99,7 +104,7 @@ class MainWindow(QMainWindow):
         self.searchCellBarcodeStecca = QLineEdit()
         self.searchCellBarcodeStecca.setPlaceholderText("Search by barcodeStecca")
         self.searchCellBarcodeStecca.setMaxLength(13)
-        self.searchCellBarcodeStecca.setValidator(QIntValidator())
+        self.searchCellBarcodeStecca.setValidator(Auxiliary.QBigIntValidator())
         self.searchCellBarcodeStecca.width = 100
         self.searchCellBarcodeStecca.height = 100
         self.searchCellBarcodeStecca.textChanged.connect(self.on_text_changed_search_barcode_stecca)
@@ -107,7 +112,7 @@ class MainWindow(QMainWindow):
         self.searchCellBarcode = QLineEdit()
         self.searchCellBarcode.setPlaceholderText("Search by barcode")
         self.searchCellBarcode.setMaxLength(13)
-        self.searchCellBarcode.setValidator(QIntValidator())
+        self.searchCellBarcode.setValidator(Auxiliary.QBigIntValidator())
         self.searchCellBarcode.width = 100
         self.searchCellBarcode.height = 100
         self.searchCellBarcode.textChanged.connect(self.on_text_changed_search_barcode)
@@ -201,6 +206,7 @@ class MainWindow(QMainWindow):
                 confirmDialog.exec()
             else:
                 self.STAQMode = not self.STAQMode
+                self.lockTable()
                 self.buttonSTAQMode.setText("Exit STAQ Mode")
                 self.buttonSTAQMode.setStyleSheet("background-color: green")
                 # Set focus on searchCell
@@ -211,11 +217,26 @@ class MainWindow(QMainWindow):
                 confirmDialog.exec()
             else:
                 self.STAQMode = not self.STAQMode
+                self.unlockTable()
                 self.buttonSTAQMode.setText("STAQ Mode")
                 self.buttonSTAQMode.setStyleSheet("background-color: none")
 
+    def lockTable(self):
+        # Disable editing
+        self.tableWidget.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        # Disable selection
+        self.tableWidget.setSelectionMode(QAbstractItemView.NoSelection)
+
+    def unlockTable(self):
+        # Enable editing
+        self.tableWidget.setEditTriggers(QAbstractItemView.AllEditTriggers)
+        # Enable selection
+        self.tableWidget.setSelectionMode(QAbstractItemView.ExtendedSelection)
+
     def on_item_changed(self, item):
         self.isTableChanged = True
+        # Disconnect callback to prevent infinite loop
+        self.tableWidget.itemChanged.disconnect()
         # If quantity is changed
         if(item.column() == Product.attributesNames.index("quantity")):
             # Set quantity to 0 if not valid (e.g. + or -)
@@ -228,17 +249,20 @@ class MainWindow(QMainWindow):
                 prevQuantity = self.myInventory.productDict.get(prodCode).attributesDict.get("quantity")
                 # Update quantity with increment
                 quantity = prevQuantity + int(item.text()[0:-1])
-                # Disconnect callback to prevent infinite loop
-                self.tableWidget.itemChanged.disconnect()
                 # Set quantity in table to new value
                 self.tableWidget.item(item.row(), item.column()).setText(str(quantity))
-                # Reconnect callback
-                self.tableWidget.itemChanged.connect(self.on_item_changed)
             # Else set quantity to the new value without increment
         newProduct = Product(*[self.tableWidget.item(item.row(), i).text() for i in range(Product.attributesNum)])
-        self.myInventory.updateProduct(newProduct)
-        self.buttonSave.setEnabled(self.isTableChanged)
-        self.buttonUndo.setEnabled(self.isTableChanged)
+        try:
+            self.myInventory.updateProduct(newProduct)
+            self.buttonSave.setEnabled(self.isTableChanged)
+            self.buttonUndo.setEnabled(self.isTableChanged)
+        except psycopg2.errors.UniqueViolation:
+            self.myInventory.conn.rollback()
+            Auxiliary.ProductAlreadyExistDialog().exec()
+            item.setText("")
+        # Reconnect callback
+        self.tableWidget.itemChanged.connect(self.on_item_changed)
 
     # Putting same number above another is not working because is not changed
     def on_item_clicked(self, item):
@@ -287,16 +311,19 @@ class MainWindow(QMainWindow):
                     # Add quantity
                     quantity = int(self.tableWidget.item(row, Product.attributesNames.index("quantity")).text())
                     self.tableWidget.item(row, 8).setText(str(quantity + 1))
-                # Reset searchCellBarcode for next scan
-                self.searchCellBarcode.setText("")
+                    # Reset searchCellBarcode for next scan
+                    self.searchCellBarcode.setText("")
         # If STAQMode is disabled, search for product
         else:
             if(len(item) == 8 or len(item) == 13):
                 prodDict = self.myInventory.productDict.copy()
                 prodDict = {k: v for k, v in prodDict.items() if v.attributesDict.get("barcode") == int(item)}
-                self.refreshTable(prodDict)
+                if(len(prodDict) == 1):
+                    self.refreshTable(prodDict)
             elif (len(item) == 0):
                 self.refreshTable(self.myInventory.productDict)
+            else:
+                self.refreshTable({})
 
     def on_text_changed_search_barcode_stecca(self, item):
         # If STAQMode is enabled, add 10 quantity to product
@@ -312,16 +339,19 @@ class MainWindow(QMainWindow):
                     # Add quantity
                     quantity = int(self.tableWidget.item(row, Product.attributesNames.index("quantity")).text())
                     self.tableWidget.item(row, 8).setText(str(quantity + 10))
-                # Reset searchCellBarcodeStecca for next scan
-                self.searchCellBarcodeStecca.setText("")
+                    # Reset searchCellBarcodeStecca for next scan
+                    self.searchCellBarcodeStecca.setText("")
         # If STAQMode is disabled, search for product
         else:
             if(len(item) == 8 or len(item) == 13):
                 prodDict = self.myInventory.productDict.copy()
                 prodDict = {k: v for k, v in prodDict.items() if v.attributesDict.get("barcodeStecca") == int(item)}
-                self.refreshTable(prodDict)
+                if(len(prodDict) == 1):
+                    self.refreshTable(prodDict)
             elif (len(item) == 0):
                 self.refreshTable(self.myInventory.productDict)
+            else:
+                self.refreshTable({})
         
     def applyChanges(self):
         self.isTableChanged = False
@@ -347,6 +377,7 @@ class MainWindow(QMainWindow):
                     self.myInventory.addProduct(newProduct)
                     self.applyChanges()
                 except psycopg2.errors.UniqueViolation:
+                    self.myInventory.conn.rollback()
                     Auxiliary.ProductAlreadyExistDialog().exec()
             else:
                 self.discardChanges()

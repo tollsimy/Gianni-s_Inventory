@@ -44,8 +44,12 @@ def create_table(cursor, connection):
             ("UNIQUE" if attrib[1][0]["unique"] else "")
     tableString += ");"
     create_table_sql = tableString
-    cursor.execute(create_table_sql)
-    connection.commit()
+    try:
+        cursor.execute(create_table_sql)
+        connection.commit()
+    except psycopg2.Error as e:
+        connection.rollback()
+        raise e
 
 # Inherit from QObject to be able to emit signals when the database changes
 class Inventory(QObject):
@@ -73,19 +77,25 @@ class Inventory(QObject):
         except psycopg2.Error as e:
             raise e
         self.cur = self.conn.cursor()
-        create_table(self.cur, self.conn)
-        # Execute the LISTEN command
-        self.cur.execute("LISTEN changeNotification;")
-        # Start a thread to execute the listen() method
-        self.listenNotifyThread = threading.Thread(target=self.listenChange)
-        self.listenNotifyThread.start()
+        try:
+            create_table(self.cur, self.conn)
+            # Execute the LISTEN command
+            self.cur.execute("LISTEN changeNotification;")
+            # Start a thread to execute the listen() method
+            self.listenNotifyThread = threading.Thread(target=self.listenChange)
+            self.listenNotifyThread.start()
+        except psycopg2.Error as e:
+            self.conn.rollback()
+            raise e
+        except RuntimeError as e:
+            raise e
 
     def __del__(self):
         if(self.listenNotifyThread is not None):
             self.listenNotifyThread.join()
         if(self.conn is not None):
             self.conn.close()
-            #print("Connection closed")
+            print("Connection closed")
 
     def listenChange(self):
         # Create a loop that waits for a notification
@@ -93,8 +103,11 @@ class Inventory(QObject):
             try:
                 self.conn.poll()
                 while self.conn.notifies:
-                    notify = self.conn.notifies.pop(0)
-                    #print("Got NOTIFY:", notify.pid, notify.channel, notify.payload)
+                    try:
+                        notify = self.conn.notifies.pop(0)
+                        #print("Got NOTIFY:", notify.pid, notify.channel, notify.payload)
+                    except IndexError as e:
+                        print(e)
                     # Update productList
                     # Note: this won't automatically apply changes even if it is executing
                     # a query because other instances are blocked until the other commits the
@@ -130,8 +143,7 @@ class Inventory(QObject):
     # Commit or discard is caller's responsibility through applyChanges() or discardChanges()
     def addProduct(self, product):
         add_product_sql = "INSERT INTO products VALUES (" 
-        add_product_sql += ("%s," * (Product.attributesNum - 1)) + "%s)"
-        add_product_sql += "ON CONFLICT (prodCode) DO NOTHING;"
+        add_product_sql += ("%s," * (Product.attributesNum - 1)) + "%s);"
         # Replace "None" and empty string with None
         attributes = [None if (attr == "None" or attr == "") else attr for attr in list(product.attributesDict.values())]
         self.cur.execute(add_product_sql, attributes)
@@ -140,7 +152,7 @@ class Inventory(QObject):
     def updateProduct(self, product):
         attrDict = product.attributesDict
         attrList = list(product.attributesDict.keys())
-        self.update_product_sql_statements += "UPDATE products SET "
+        self.update_product_sql_statements = "UPDATE products SET "
         self.update_product_sql_statements += ", ".join([attrib + " = %s" for attrib in attrList])
         self.update_product_sql_statements += " WHERE prodCode = %s;"
         # Replace "None" and empty string with None
@@ -148,7 +160,6 @@ class Inventory(QObject):
         # Add prodCode to the end of attributes because it's used in the WHERE clause
         attributes.append(attrDict.get("prodCode"))
         self.cur.execute(self.update_product_sql_statements, attributes)
-        self.update_product_sql_statements = ""
 
     # Commit or discard is caller's responsibility through applyChanges() or discardChanges()
     def deleteProduct(self, prodCode):
@@ -204,26 +215,9 @@ class Inventory(QObject):
             self.addProductList()
 
     # ========== Search functions =============
-
-    def getProductsByCategory(self, category):
-        get_products_by_category_sql = "SELECT * FROM products WHERE category LIKE %s;"
-        self.cur.execute(get_products_by_category_sql, ('%' + category + '%',))
-        rows = self.cur.fetchall()
-        self.productDict = {}
-        for row in rows:
-            self.productDict[row[1]] = Product(*row)
     
     def getProductByProdCode(self, prodCode):
         return self.getProduct(prodCode)
-    
-    def getProductsByDenomComm(self, denomComm):
-        get_products_by_denomComm_sql = "SELECT * FROM products WHERE denomComm LIKE %s;"
-        self.cur.execute(get_products_by_denomComm_sql, ('%' + denomComm + '%',))
-        rows = self.cur.fetchall()
-        self.productDict = {}
-        for row in rows:
-            self.productDict[row[1]] = Product(*row)
-        return self.productDict
     
     def getProductsByBarcode(self, barcode):
         get_products_by_barcode_sql = "SELECT * FROM products WHERE barcode = %s;"
@@ -234,146 +228,9 @@ class Inventory(QObject):
             self.productDict[row[1]] = Product(*row)
         return self.productDict
     
-    def getProductsByPriceKg(self, priceKg):
-        get_products_by_priceKg_sql = "SELECT * FROM products WHERE priceKg = %s;"
-        self.cur.execute(get_products_by_priceKg_sql, (priceKg,))
-        rows = self.cur.fetchall()
-        self.productDict = {}
-        for row in rows:
-            self.productDict[row[1]] = Product(*row)
-        return self.productDict
-    
-    def getProductsByPricePz(self, pricePz):
-        get_products_by_pricePz_sql = "SELECT * FROM products WHERE pricePz = %s;"
-        self.cur.execute(get_products_by_pricePz_sql, (pricePz,))
-        rows = self.cur.fetchall()
-        self.productDict = {}
-        for row in rows:
-            self.productDict[row[1]] = Product(*row)
-        return self.productDict
-    
-    def getProductsByPackageType(self, packageType):
-        get_products_by_packageType_sql = "SELECT * FROM products WHERE packageType = %s;"
-        self.cur.execute(get_products_by_packageType_sql, (packageType,))
-        rows = self.cur.fetchall()
-        self.productDict = {}
-        for row in rows:
-            self.productDict[row[1]] = Product(*row)
-        return self.productDict
-    
-    def getProductsByPackageNumber(self, packageNumber):
-        get_products_by_packageNumber_sql = "SELECT * FROM products WHERE packageNumber = %s;"
-        self.cur.execute(get_products_by_packageNumber_sql, (packageNumber,))
-        rows = self.cur.fetchall()
-        self.productDict = {}
-        for row in rows:
-            self.productDict[row[1]] = Product(*row)
-        return self.productDict
-    
-    def getProductsByQuantity(self, quantity):
-        get_products_by_quantity_sql = "SELECT * FROM products WHERE quantity = %s;"
-        self.cur.execute(get_products_by_quantity_sql, (quantity,))
-        rows = self.cur.fetchall()
-        self.productDict = {}
-        for row in rows:
-            self.productDict[row[1]] = Product(*row)
-        return self.productDict
-    
     def getProductsByBarcodeStecca(self, barcodeStecca):
         get_products_by_barcodeStecca_sql = "SELECT * FROM products WHERE barcodeStecca = %s;"
         self.cur.execute(get_products_by_barcodeStecca_sql, (barcodeStecca,))
-        rows = self.cur.fetchall()
-        self.productDict = {}
-        for row in rows:
-            self.productDict[row[1]] = Product(*row)
-        return self.productDict
-    
-    # =============== Order functions ===============
-
-    def getOrderedByCategory(self):
-        get_ordered_by_category_sql = "SELECT * FROM products ORDER BY category;"
-        self.cur.execute(get_ordered_by_category_sql)
-        rows = self.cur.fetchall()
-        self.productDict = {}
-        for row in rows:
-            self.productDict[row[1]] = Product(*row)        
-        return self.productDict
-
-    def getOrderedByProdCode(self):
-        get_ordered_by_prodCode_sql = "SELECT * FROM products ORDER BY prodCode;"
-        self.cur.execute(get_ordered_by_prodCode_sql)
-        rows = self.cur.fetchall()
-        self.productDict = {}
-        for row in rows:
-            self.productDict[row[1]] = Product(*row)        
-        return self.productDict
-    
-    def getOrderedByDenomComm(self):
-        get_ordered_by_denomComm_sql = "SELECT * FROM products ORDER BY denomComm;"
-        self.cur.execute(get_ordered_by_denomComm_sql)
-        rows = self.cur.fetchall()
-        self.productDict = {}
-        for row in rows:
-            self.productDict[row[1]] = Product(*row)        
-        return self.productDict
-    
-    def getOrderedByBarcode(self):
-        get_ordered_by_barcode_sql = "SELECT * FROM products ORDER BY barcode;"
-        self.cur.execute(get_ordered_by_barcode_sql)
-        rows = self.cur.fetchall()
-        self.productDict = {}
-        for row in rows:
-            self.productDict[row[1]] = Product(*row)        
-        return self.productDict
-    
-    def getOrderedByPriceKg(self):
-        get_ordered_by_priceKg_sql = "SELECT * FROM products ORDER BY priceKg;"
-        self.cur.execute(get_ordered_by_priceKg_sql)
-        rows = self.cur.fetchall()
-        self.productDict = {}
-        for row in rows:
-            self.productDict[row[1]] = Product(*row)        
-        return self.productDict
-    
-    def getOrderedByPricePz(self):
-        get_ordered_by_pricePz_sql = "SELECT * FROM products ORDER BY pricePz;"
-        self.cur.execute(get_ordered_by_pricePz_sql)
-        rows = self.cur.fetchall()
-        self.productDict = {}
-        for row in rows:
-            self.productDict[row[1]] = Product(*row)        
-        return self.productDict
-    
-    def getOrderedByPackageType(self):
-        get_ordered_by_packageType_sql = "SELECT * FROM products ORDER BY packageType;"
-        self.cur.execute(get_ordered_by_packageType_sql)
-        rows = self.cur.fetchall()
-        self.productDict = {}
-        for row in rows:
-            self.productDict[row[1]] = Product(*row)        
-        return self.productDict
-    
-    def getOrderedByPackageNumber(self):
-        get_ordered_by_packageNumber_sql = "SELECT * FROM products ORDER BY packageNumber;"
-        self.cur.execute(get_ordered_by_packageNumber_sql)
-        rows = self.cur.fetchall()
-        self.productDict = {}
-        for row in rows:
-            self.productDict[row[1]] = Product(*row)        
-        return self.productDict
-    
-    def getOrderedByQuantity(self):
-        get_ordered_by_quantity_sql = "SELECT * FROM products ORDER BY quantity;"
-        self.cur.execute(get_ordered_by_quantity_sql)
-        rows = self.cur.fetchall()
-        self.productDict = {}
-        for row in rows:
-            self.productDict[row[1]] = Product(*row)
-        return self.productDict
-    
-    def getOrderedByBarcodeStecca(self):
-        get_ordered_by_barcodeStecca_sql = "SELECT * FROM products ORDER BY barcodeStecca;"
-        self.cur.execute(get_ordered_by_barcodeStecca_sql)
         rows = self.cur.fetchall()
         self.productDict = {}
         for row in rows:

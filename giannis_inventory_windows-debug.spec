@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['inventory/giannis_inventory.py'],
+    ['inventory\\giannis_inventory.py'],
     pathex=[],
     binaries=[],
     datas = [('inventory/icon.png', '.')],
@@ -21,15 +21,18 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='Giannis_Inventory-linux',
+    name='Giannis_Inventory-windows.exe',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=False,
+    upx_exclude=[],
+    runtime_tmpdir=None,
+    console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=['icon.ico'],
 )
