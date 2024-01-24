@@ -72,6 +72,28 @@ class IntOrEmptyValidator(QValidator):
             except ValueError:
                 return QValidator.Invalid, string, pos
 
+# 13 digits
+class QBigIntValidator(QValidator):
+    def validate(self, string, pos):
+        if string == "":
+            return QValidator.Acceptable, string, pos
+        else:
+            if (len(string) > 9):
+                string1 = string[:9]
+                string2 = string[9:]
+                try:
+                    val1 = int(string1)
+                    val2 = int(string2)
+                    return QValidator.Acceptable, string, pos
+                except ValueError:
+                    return QValidator.Invalid, string, pos
+            else:
+                try:
+                    val = int(string)
+                    return QValidator.Acceptable, string, pos
+                except ValueError:
+                    return QValidator.Invalid, string, pos
+
 # Valid combinations:
 # +1, -1, +20=, -20=, +, -, ""
 class IncrementDecrementValidator(QValidator):
@@ -238,7 +260,7 @@ class InvalidCredentialsDialog(QDialog):
         self.buttonBox.accepted.connect(self.accept)     
 
         self.layout = QVBoxLayout()
-        message = QLabel("The database credentials you inserted are not valid.")
+        message = QLabel("Error: The database credentials you inserted are not valid.")
         self.layout.addWidget(message)
         self.layout.addWidget(self.buttonBox, alignment=Qt.AlignCenter)
         self.setLayout(self.layout)
@@ -291,7 +313,7 @@ class ProductAlreadyExistDialog(QDialog):
         self.buttonBox.accepted.connect(self.accept)        
 
         self.layout = QVBoxLayout()
-        message = QLabel("An item with this prodCode / barcode / barcodeStecca already exists, item won't be added.")
+        message = QLabel("Error: An item with this prodCode / barcode / barcodeStecca already exists.")
         self.layout.addWidget(message)
         self.layout.addWidget(self.buttonBox, alignment=Qt.AlignCenter)
         self.setLayout(self.layout)
@@ -428,7 +450,7 @@ class InvalidFileFormatDialog(QDialog):
         self.buttonBox.accepted.connect(self.accept)        
 
         self.layout = QVBoxLayout()
-        message = QLabel("The file you are trying to import is not a valid CSV file.")
+        message = QLabel("Error: The file you are trying to import is not a valid CSV file.")
         self.layout.addWidget(message)
         self.layout.addWidget(self.buttonBox, alignment=Qt.AlignCenter)
         self.setLayout(self.layout)
